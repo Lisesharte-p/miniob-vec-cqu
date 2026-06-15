@@ -19,6 +19,7 @@ See the Mulan PSL v2 for more details. */
 #include "storage/db/db.h"
 #include "storage/table/table.h"
 #include "sql/parser/expression_binder.h"
+#include "sql/expr/expression.h"
 
 using namespace std;
 using namespace common;
@@ -100,6 +101,30 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
     return rc;
   }
 
+  // build alias map from SELECT expressions for ORDER BY resolution
+  unordered_map<string, size_t> alias_map;
+  for (size_t i = 0; i < bound_expressions.size(); i++) {
+    alias_map[string(bound_expressions[i]->name())] = i;
+  }
+
+  vector<unique_ptr<Expression>> order_by_expressions;
+  for (unique_ptr<Expression> &expression : select_sql.order_by) {
+    RC rc = expression_binder.bind_expression(expression, order_by_expressions);
+    if (OB_FAIL(rc)) {
+      // try alias resolution: check if order-by name matches a SELECT expression ali as
+      if (expression->type() == ExprType::UNBOUND_FIELD) {
+        auto *unbound = static_cast<UnboundFieldExpr *>(expression.get());
+        auto iter = alias_map.find(unbound->field_name());
+        if (iter != alias_map.end()) {
+          order_by_expressions.emplace_back(bound_expressions[iter->second]->copy());
+          continue;
+        }
+      }
+      LOG_INFO("bind expression failed. rc=%s", strrc(rc));
+      return rc;
+    }
+  }
+
   // everything alright
   SelectStmt *select_stmt = new SelectStmt();
 
@@ -107,6 +132,7 @@ RC SelectStmt::create(Db *db, SelectSqlNode &select_sql, Stmt *&stmt)
   select_stmt->query_expressions_.swap(bound_expressions);
   select_stmt->filter_stmt_ = filter_stmt;
   select_stmt->group_by_.swap(group_by_expressions);
+  select_stmt->order_by_.swap(order_by_expressions);
   stmt                      = select_stmt;
   return RC::SUCCESS;
 }

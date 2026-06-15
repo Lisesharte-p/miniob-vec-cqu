@@ -131,6 +131,9 @@ Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_s
 //标识tokens
 %token  SEMICOLON
         BY
+        ORDER
+        ASC
+        AS
         CREATE
         DROP
         GROUP
@@ -244,9 +247,11 @@ Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_s
 %type <key_list>            attr_list
 %type <relation_list>       rel_list
 %type <expression>          expression
+%type <expression>          expression_alias
 %type <expression>          aggregate_expression
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
+%type <expression_list>     order_by
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
 %type <sql_node>            calc_stmt
@@ -568,7 +573,7 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT expression_list FROM rel_list where group_by
+    SELECT expression_list FROM rel_list where group_by order_by
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -590,6 +595,11 @@ select_stmt:        /*  select 语句的语法解析树*/
         $$->selection.group_by.swap(*$6);
         delete $6;
       }
+
+      if ($7 != nullptr) {
+        $$->selection.order_by.swap(*$7);
+        delete $7;
+      }
     }
     ;
 calc_stmt:
@@ -602,12 +612,12 @@ calc_stmt:
     ;
 
 expression_list:
-    expression
+    expression_alias
     {
       $$ = new vector<unique_ptr<Expression>>;
       $$->emplace_back($1);
     }
-    | expression COMMA expression_list
+    | expression_alias COMMA expression_list
     {
       if ($3 != nullptr) {
         $$ = $3;
@@ -615,6 +625,18 @@ expression_list:
         $$ = new vector<unique_ptr<Expression>>;
       }
       $$->emplace($$->begin(), $1);
+    }
+    ;
+
+expression_alias:
+    expression
+    {
+      $$ = $1;
+    }
+    | expression AS ID
+    {
+      $$ = $1;
+      $$->set_name($3);
     }
     ;
 expression:
@@ -803,6 +825,17 @@ group_by:
       $$ = $3;
     }
     ;
+order_by:
+    /* empty */
+    {
+      $$ = nullptr;
+    }
+    | ORDER BY expression_list
+    {
+      $$ = $3;
+    }
+    ;
+
 load_data_stmt:
     LOAD DATA INFILE SSS INTO TABLE ID fields_terminated_by enclosed_by
     {

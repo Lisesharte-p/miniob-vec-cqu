@@ -27,6 +27,8 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/table_get_logical_operator.h"
 #include "sql/operator/group_by_logical_operator.h"
 
+#include "sql/operator/sort_logical_operator.h"
+
 #include "sql/stmt/calc_stmt.h"
 #include "sql/stmt/delete_stmt.h"
 #include "sql/stmt/explain_stmt.h"
@@ -136,6 +138,21 @@ RC LogicalPlanGenerator::create_plan(SelectStmt *select_stmt, unique_ptr<Logical
     }
 
     last_oper = &group_by_oper;
+  }
+
+  unique_ptr<LogicalOperator> sort_oper;
+  rc = create_sort_plan(select_stmt, sort_oper);
+  if (OB_FAIL(rc)) {
+    LOG_WARN("failed to create sort logical plan. rc=%s", strrc(rc));
+    return rc;
+  }
+
+  if (sort_oper) {
+    if (*last_oper) {
+      sort_oper->add_child(std::move(*last_oper));
+    }
+
+    last_oper = &sort_oper;
   }
 
   unique_ptr<LogicalOperator> project_oper = make_unique<ProjectLogicalOperator>(std::move(select_stmt->query_expressions()));
@@ -355,5 +372,17 @@ RC LogicalPlanGenerator::create_group_by_plan(SelectStmt *select_stmt, unique_pt
   auto group_by_oper = make_unique<GroupByLogicalOperator>(std::move(group_by_expressions),
                                                            std::move(aggregate_expressions));
   logical_operator = std::move(group_by_oper);
+  return RC::SUCCESS;
+}
+
+RC LogicalPlanGenerator::create_sort_plan(SelectStmt *select_stmt, unique_ptr<LogicalOperator> &logical_operator)
+{
+  vector<unique_ptr<Expression>> &order_by_expressions = select_stmt->order_by();
+  if (order_by_expressions.empty()) {
+    return RC::SUCCESS;
+  }
+
+  auto sort_oper = make_unique<SortLogicalOperator>(std::move(order_by_expressions));
+  logical_operator = std::move(sort_oper);
   return RC::SUCCESS;
 }
