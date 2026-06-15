@@ -10,6 +10,6 @@ See the Mulan PSL v2 for more details. */
 
 #include "sql/operator/sort_logical_operator.h"
 
-SortLogicalOperator::SortLogicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions)
-    : order_by_expressions_(std::move(order_by_expressions))
+SortLogicalOperator::SortLogicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions, int limit)
+    : order_by_expressions_(std::move(order_by_expressions)), limit_(limit)
 {}

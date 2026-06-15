@@ -42,9 +42,14 @@ RC CreateIndexStmt::create(Db *db, const CreateIndexSqlNode &create_index, Stmt 
 
   const FieldMeta *field_meta = table->table_meta().field(create_index.attribute_name.c_str());
   if (nullptr == field_meta) {
-    LOG_WARN("no such field in table. db=%s, table=%s, field name=%s", 
+    LOG_WARN("no such field in table. db=%s, table=%s, field name=%s",
              db->name(), table_name, create_index.attribute_name.c_str());
     return RC::SCHEMA_FIELD_NOT_EXIST;
+  }
+
+  if (create_index.is_vector_index && field_meta->type() != AttrType::VECTORS) {
+    LOG_WARN("vector index can only be created on VECTORS type field. field=%s", create_index.attribute_name.c_str());
+    return RC::INVALID_ARGUMENT;
   }
 
   Index *index = table->find_index(create_index.index_name.c_str());
@@ -53,6 +58,18 @@ RC CreateIndexStmt::create(Db *db, const CreateIndexSqlNode &create_index, Stmt 
     return RC::SCHEMA_INDEX_NAME_REPEAT;
   }
 
-  stmt = new CreateIndexStmt(table, field_meta, create_index.index_name);
+  if (create_index.is_vector_index) {
+    if (create_index.lists > 0 && create_index.lists > 65536) {
+      LOG_WARN("lists parameter out of range: %d", create_index.lists);
+      return RC::INVALID_ARGUMENT;
+    }
+    if (create_index.probes > 0 && create_index.probes > create_index.lists) {
+      LOG_WARN("probes (%d) cannot exceed lists (%d)", create_index.probes, create_index.lists);
+      return RC::INVALID_ARGUMENT;
+    }
+  }
+
+  stmt = new CreateIndexStmt(table, field_meta, create_index.index_name, create_index.is_vector_index,
+                              create_index.lists, create_index.probes);
   return RC::SUCCESS;
 }

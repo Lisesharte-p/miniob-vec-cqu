@@ -382,7 +382,7 @@ RC LogicalPlanGenerator::create_sort_plan(SelectStmt *select_stmt, unique_ptr<Lo
     return RC::SUCCESS;
   }
 
-  auto sort_oper = make_unique<SortLogicalOperator>(std::move(order_by_expressions));
+  auto sort_oper = make_unique<SortLogicalOperator>(std::move(order_by_expressions), select_stmt->limit());
   logical_operator = std::move(sort_oper);
   return RC::SUCCESS;
 }

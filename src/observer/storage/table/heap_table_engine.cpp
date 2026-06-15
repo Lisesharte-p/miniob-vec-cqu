@@ -12,6 +12,7 @@ See the Mulan PSL v2 for more details. */
 #include "storage/record/heap_record_scanner.h"
 #include "common/log/log.h"
 #include "storage/index/bplus_tree_index.h"
+#include "storage/index/ivfflat_index.h"
 #include "storage/common/meta_util.h"
 #include "storage/db/db.h"
 
@@ -122,7 +123,7 @@ RC HeapTableEngine::get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadW
   return rc;
 }
 
-RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name)
+RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name, bool is_vector_index, int lists, int probes)
 {
   if (common::is_blank(index_name) || nullptr == field_meta) {
     LOG_INFO("Invalid input arguments, table name is %s, index_name is blank or attribute_name is blank", table_meta_->name());
@@ -133,52 +134,111 @@ RC HeapTableEngine::create_index(Trx *trx, const FieldMeta *field_meta, const ch
 
   RC rc = new_index_meta.init(index_name, *field_meta);
   if (rc != RC::SUCCESS) {
-    LOG_INFO("Failed to init IndexMeta in table:%s, index_name:%s, field_name:%s", 
+    LOG_INFO("Failed to init IndexMeta in table:%s, index_name:%s, field_name:%s",
              table_meta_->name(), index_name, field_meta->name());
     return rc;
   }
 
-  // 创建索引相关数据
-  BplusTreeIndex *index      = new BplusTreeIndex();
-  string          index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_name);
+  string index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_name);
 
-  rc = index->create(table_, index_file.c_str(), new_index_meta, *field_meta);
-  if (rc != RC::SUCCESS) {
-    delete index;
-    LOG_ERROR("Failed to create bplus tree index. file name=%s, rc=%d:%s", index_file.c_str(), rc, strrc(rc));
-    return rc;
-  }
-
-  // 遍历当前的所有数据，插入这个索引
-  RecordScanner *scanner = nullptr;
-  rc = get_record_scanner(scanner, trx, ReadWriteMode::READ_ONLY);
-  if (rc != RC::SUCCESS) {
-    LOG_WARN("failed to create scanner while creating index. table=%s, index=%s, rc=%s", 
-             table_meta_->name(), index_name, strrc(rc));
-    return rc;
-  }
-
-  Record record;
-  while (OB_SUCC(rc = scanner->next(record))) {
-    rc = index->insert_entry(record.data(), &record.rid());
+  // create the appropriate index type
+  Index *index = nullptr;
+  if (is_vector_index) {
+    int effective_lists  = (lists > 0)  ? lists  : 245;
+    int effective_probes = (probes > 0) ? probes : 5;
+    IvfflatIndex *ivf_index = new IvfflatIndex(effective_lists, effective_probes);
+    rc = ivf_index->create(table_, index_file.c_str(), new_index_meta, *field_meta);
     if (rc != RC::SUCCESS) {
+      delete ivf_index;
+      LOG_ERROR("Failed to create ivfflat index. file name=%s, rc=%d:%s", index_file.c_str(), rc, strrc(rc));
+      return rc;
+    }
+    index = ivf_index;
+  } else {
+    BplusTreeIndex *bplus_index = new BplusTreeIndex();
+    rc = bplus_index->create(table_, index_file.c_str(), new_index_meta, *field_meta);
+    if (rc != RC::SUCCESS) {
+      delete bplus_index;
+      LOG_ERROR("Failed to create bplus tree index. file name=%s, rc=%d:%s", index_file.c_str(), rc, strrc(rc));
+      return rc;
+    }
+    index = bplus_index;
+  }
+
+  // populate existing records into the index
+  if (is_vector_index) {
+    // for vector index: collect vectors and rids, then train k-means and persist
+    RecordScanner *scanner = nullptr;
+    rc = get_record_scanner(scanner, trx, ReadWriteMode::READ_ONLY);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to create scanner while creating index. table=%s, index=%s, rc=%s",
+               table_meta_->name(), index_name, strrc(rc));
+      return rc;
+    }
+
+    std::vector<std::vector<float>> vectors;
+    std::vector<RID> rids;
+    Record record;
+    int dim = field_meta->len() / static_cast<int>(sizeof(float));
+    while (OB_SUCC(rc = scanner->next(record))) {
+      const float *vec_data = reinterpret_cast<const float *>(record.data() + field_meta->offset());
+      vectors.emplace_back(vec_data, vec_data + dim);
+      rids.push_back(record.rid());
+    }
+    if (RC::RECORD_EOF == rc) {
+      rc = RC::SUCCESS;
+    } else {
+      LOG_WARN("failed to scan records while creating index. table=%s, index=%s, rc=%s",
+               table_meta_->name(), index_name, strrc(rc));
+      scanner->close_scan();
+      delete scanner;
+      return rc;
+    }
+    scanner->close_scan();
+    delete scanner;
+
+    IvfflatIndex *ivf_index = static_cast<IvfflatIndex *>(index);
+    rc = ivf_index->build(vectors, rids);
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("failed to build ivfflat index. table=%s, index=%s, rc=%s",
+                table_meta_->name(), index_name, strrc(rc));
+      return rc;
+    }
+    LOG_INFO("built ivfflat index with %zu records. table=%s, index=%s", vectors.size(),
+             table_meta_->name(), index_name);
+  } else {
+    RecordScanner *scanner = nullptr;
+    rc = get_record_scanner(scanner, trx, ReadWriteMode::READ_ONLY);
+    if (rc != RC::SUCCESS) {
+      LOG_WARN("failed to create scanner while creating index. table=%s, index=%s, rc=%s",
+               table_meta_->name(), index_name, strrc(rc));
+      return rc;
+    }
+
+    Record record;
+    while (OB_SUCC(rc = scanner->next(record))) {
+      rc = index->insert_entry(record.data(), &record.rid());
+      if (rc != RC::SUCCESS) {
+        LOG_WARN("failed to insert record into index while creating index. table=%s, index=%s, rc=%s",
+                 table_meta_->name(), index_name, strrc(rc));
+        return rc;
+      }
+    }
+    if (RC::RECORD_EOF == rc) {
+      rc = RC::SUCCESS;
+    } else {
       LOG_WARN("failed to insert record into index while creating index. table=%s, index=%s, rc=%s",
                table_meta_->name(), index_name, strrc(rc));
       return rc;
     }
+    scanner->close_scan();
+    delete scanner;
+    LOG_INFO("inserted all records into new index. table=%s, index=%s", table_meta_->name(), index_name);
   }
-  if (RC::RECORD_EOF == rc) {
-    rc = RC::SUCCESS;
-  } else {
-    LOG_WARN("failed to insert record into index while creating index. table=%s, index=%s, rc=%s",
-             table_meta_->name(), index_name, strrc(rc));
-    return rc;
-  }
-  scanner->close_scan();
-  delete scanner;
-  LOG_INFO("inserted all records into new index. table=%s, index=%s", table_meta_->name(), index_name);
 
   indexes_.push_back(index);
+  LOG_INFO("created index. table=%s, index=%s, type=%s",
+           table_meta_->name(), index_name, is_vector_index ? "ivfflat" : "bplus_tree");
 
   /// 接下来将这个索引放到表的元数据中
   TableMeta new_table_meta(*table_meta_);
@@ -325,19 +385,33 @@ RC HeapTableEngine::open()
       return RC::INTERNAL;
     }
 
-    BplusTreeIndex *index      = new BplusTreeIndex();
-    string          index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_meta->name());
+    if (field_meta->type() == AttrType::VECTORS) {
+      // vector index
+      IvfflatIndex *index = new IvfflatIndex(245, 5);
+      string index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_meta->name());
+      rc = index->open(table_, index_file.c_str(), *index_meta, *field_meta);
+      if (rc != RC::SUCCESS) {
+        delete index;
+        LOG_ERROR("Failed to open vector index. table=%s, index=%s, file=%s, rc=%s",
+                  table_meta_->name(), index_meta->name(), index_file.c_str(), strrc(rc));
+        return rc;
+      }
+      indexes_.push_back(index);
+    } else {
+      BplusTreeIndex *index      = new BplusTreeIndex();
+      string          index_file = table_index_file(db_->path().c_str(), table_meta_->name(), index_meta->name());
 
-    rc = index->open(table_, index_file.c_str(), *index_meta, *field_meta);
-    if (rc != RC::SUCCESS) {
-      delete index;
-      LOG_ERROR("Failed to open index. table=%s, index=%s, file=%s, rc=%s",
-                table_meta_->name(), index_meta->name(), index_file.c_str(), strrc(rc));
-      // skip cleanup
-      //  do all cleanup action in destructive Table function.
-      return rc;
+      rc = index->open(table_, index_file.c_str(), *index_meta, *field_meta);
+      if (rc != RC::SUCCESS) {
+        delete index;
+        LOG_ERROR("Failed to open index. table=%s, index=%s, file=%s, rc=%s",
+                  table_meta_->name(), index_meta->name(), index_file.c_str(), strrc(rc));
+        // skip cleanup
+        //  do all cleanup action in destructive Table function.
+        return rc;
+      }
+      indexes_.push_back(index);
     }
-    indexes_.push_back(index);
   }
   return rc;
 }

@@ -134,6 +134,7 @@ Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_s
         ORDER
         ASC
         AS
+        USING
         CREATE
         DROP
         GROUP
@@ -189,6 +190,8 @@ Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_s
         STRING_TO_VECTOR
         VECTOR_TO_STRING
         DISTANCE
+        WITH
+        LIMIT
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -252,6 +255,7 @@ Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_s
 %type <expression_list>     expression_list
 %type <expression_list>     group_by
 %type <expression_list>     order_by
+%type <number>              limit_clause
 %type <cstring>             fields_terminated_by
 %type <cstring>             enclosed_by
 %type <sql_node>            calc_stmt
@@ -384,6 +388,94 @@ create_index_stmt:    /*create index 语句的语法解析树*/
       create_index.index_name = $3;
       create_index.relation_name = $5;
       create_index.attribute_name = $7;
+      create_index.is_vector_index = false;
+    }
+    | CREATE INDEX ID ON ID LBRACE ID RBRACE USING VECTOR_T
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $3;
+      create_index.relation_name = $5;
+      create_index.attribute_name = $7;
+      create_index.is_vector_index = true;
+    }
+    | CREATE VECTOR_T INDEX ID ON ID LBRACE ID RBRACE
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $4;
+      create_index.relation_name = $6;
+      create_index.attribute_name = $8;
+      create_index.is_vector_index = true;
+    }
+    | CREATE VECTOR_T INDEX ID ON ID LBRACE ID RBRACE WITH LBRACE
+        ID EQ NUMBER
+      RBRACE
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $4;
+      create_index.relation_name = $6;
+      create_index.attribute_name = $8;
+      create_index.is_vector_index = true;
+      if (0 == strcasecmp($12, "lists")) {
+        if ($14 <= 0) {
+          yyerror(&@$, sql_string, sql_result, scanner, "lists must be greater than 0");
+          YYERROR;
+        }
+        create_index.lists = $14;
+      } else if (0 == strcasecmp($12, "probes")) {
+        if ($14 <= 0) {
+          yyerror(&@$, sql_string, sql_result, scanner, "probes must be greater than 0");
+          YYERROR;
+        }
+        create_index.probes = $14;
+      } else {
+        yyerror(&@$, sql_string, sql_result, scanner, "unknown parameter, expected 'lists' or 'probes'");
+        YYERROR;
+      }
+    }
+    | CREATE VECTOR_T INDEX ID ON ID LBRACE ID RBRACE WITH LBRACE
+        ID EQ NUMBER COMMA ID EQ NUMBER
+      RBRACE
+    {
+      $$ = new ParsedSqlNode(SCF_CREATE_INDEX);
+      CreateIndexSqlNode &create_index = $$->create_index;
+      create_index.index_name = $4;
+      create_index.relation_name = $6;
+      create_index.attribute_name = $8;
+      create_index.is_vector_index = true;
+
+      auto set_param = [&](const string &name, int value, int &target) -> bool {
+        if (value <= 0) {
+          string err = name + " must be greater than 0";
+          yyerror(&@$, sql_string, sql_result, scanner, err.c_str());
+          return false;
+        }
+        target = value;
+        return true;
+      };
+
+      bool valid = true;
+      if (0 == strcasecmp($12, "lists")) {
+        valid = set_param("lists", $14, create_index.lists);
+      } else if (0 == strcasecmp($12, "probes")) {
+        valid = set_param("probes", $14, create_index.probes);
+      } else {
+        yyerror(&@$, sql_string, sql_result, scanner, "unknown parameter, expected 'lists' or 'probes'");
+        valid = false;
+      }
+      if (!valid) YYERROR;
+
+      if (0 == strcasecmp($16, "lists")) {
+        valid = set_param("lists", $18, create_index.lists);
+      } else if (0 == strcasecmp($16, "probes")) {
+        valid = set_param("probes", $18, create_index.probes);
+      } else {
+        yyerror(&@$, sql_string, sql_result, scanner, "unknown parameter, expected 'lists' or 'probes'");
+        valid = false;
+      }
+      if (!valid) YYERROR;
     }
     ;
 
@@ -573,7 +665,7 @@ update_stmt:      /*  update 语句的语法解析树*/
     }
     ;
 select_stmt:        /*  select 语句的语法解析树*/
-    SELECT expression_list FROM rel_list where group_by order_by
+    SELECT expression_list FROM rel_list where group_by order_by limit_clause
     {
       $$ = new ParsedSqlNode(SCF_SELECT);
       if ($2 != nullptr) {
@@ -600,6 +692,23 @@ select_stmt:        /*  select 语句的语法解析树*/
         $$->selection.order_by.swap(*$7);
         delete $7;
       }
+
+      $$->selection.limit = $8;
+    }
+    ;
+
+limit_clause:
+    /* empty */
+    {
+      $$ = -1;
+    }
+    | LIMIT NUMBER
+    {
+      if ($2 <= 0) {
+        yyerror(&@$, sql_string, sql_result, scanner, "LIMIT must be greater than 0");
+        YYERROR;
+      }
+      $$ = $2;
     }
     ;
 calc_stmt:

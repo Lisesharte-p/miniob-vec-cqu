@@ -13,6 +13,8 @@ See the Mulan PSL v2 for more details. */
 //
 
 #include "common/log/log.h"
+#include <cctype>
+#include <cstring>
 #include "sql/expr/expression.h"
 #include "session/session.h"
 #include "sql/operator/aggregate_vec_physical_operator.h"
@@ -44,7 +46,9 @@ See the Mulan PSL v2 for more details. */
 #include "sql/operator/sort_logical_operator.h"
 #include "sql/operator/sort_physical_operator.h"
 #include "sql/operator/table_scan_vec_physical_operator.h"
+#include "sql/operator/vector_index_scan_physical_operator.h"
 #include "sql/optimizer/physical_plan_generator.h"
+#include "storage/index/ivfflat_index.h"
 
 using namespace std;
 
@@ -381,7 +385,51 @@ RC PhysicalPlanGenerator::create_plan(SortLogicalOperator &logical_oper, unique_
 {
   RC rc = RC::SUCCESS;
 
-  auto sort_oper = make_unique<SortPhysicalOperator>(std::move(logical_oper.order_by_expressions()));
+  // Vector index optimization: detect DISTANCE ORDER BY on indexed field
+  {
+    auto &order_exprs = logical_oper.order_by_expressions();
+    int limit = logical_oper.limit();
+    if (limit > 0 && order_exprs.size() == 1 && order_exprs[0]->type() == ExprType::DISTANCE) {
+      auto *dist_expr = static_cast<DistanceExpr *>(order_exprs[0].get());
+      string dist_type = dist_expr->distance_type();
+      // case-insensitive normalization
+      for (auto &c : dist_type) {
+        c = static_cast<char>(toupper(c));
+      }
+      if (dist_type == "EUCLIDEAN" || dist_type == "L2") {
+        auto &left_expr  = dist_expr->left();
+        auto &right_expr = dist_expr->right();
+        if (left_expr->type() == ExprType::FIELD && right_expr->type() == ExprType::VALUE) {
+          auto *field_expr = static_cast<FieldExpr *>(left_expr.get());
+          auto *value_expr = static_cast<ValueExpr *>(right_expr.get());
+
+          const Field &field = field_expr->field();
+          const Table *table = field.table();
+          if (table != nullptr) {
+            Index *index = table->find_index_by_field(field.field_name());
+            if (index != nullptr && index->is_vector_index()) {
+              IvfflatIndex *vec_index = static_cast<IvfflatIndex *>(index);
+
+              // Extract query vector from the value
+              const Value &val = value_expr->get_value();
+              if (val.attr_type() == AttrType::VECTORS) {
+                vector<float> query_vector(val.length() / sizeof(float));
+                memcpy(query_vector.data(), val.data(), val.length());
+
+                auto vec_scan = make_unique<VectorIndexScanPhysicalOperator>(
+                    const_cast<Table *>(table), vec_index, query_vector, limit);
+                oper = std::move(vec_scan);
+                LOG_TRACE("use vector index scan for ANN query, limit=%d", limit);
+                return RC::SUCCESS;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  auto sort_oper = make_unique<SortPhysicalOperator>(std::move(logical_oper.order_by_expressions()), logical_oper.limit());
 
   if (!logical_oper.children().empty()) {
     LogicalOperator             &child_oper = *logical_oper.children().front();

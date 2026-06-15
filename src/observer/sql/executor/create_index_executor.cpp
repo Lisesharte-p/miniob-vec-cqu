@@ -32,5 +32,19 @@ RC CreateIndexExecutor::execute(SQLStageEvent *sql_event)
 
   Trx   *trx   = session->current_trx();
   Table *table = create_index_stmt->table();
-  return table->create_index(trx, create_index_stmt->field_meta(), create_index_stmt->index_name().c_str());
+
+  if (create_index_stmt->is_vector_index()) {
+    const FieldMeta *field_meta = create_index_stmt->field_meta();
+    if (field_meta->type() != AttrType::VECTORS) {
+      LOG_WARN("cannot create vector index on non-VECTORS field. field=%s", field_meta->name());
+      return RC::INVALID_ARGUMENT;
+    }
+  }
+
+  return table->create_index(trx,
+      create_index_stmt->field_meta(),
+      create_index_stmt->index_name().c_str(),
+      create_index_stmt->is_vector_index(),
+      create_index_stmt->lists(),
+      create_index_stmt->probes());
 }

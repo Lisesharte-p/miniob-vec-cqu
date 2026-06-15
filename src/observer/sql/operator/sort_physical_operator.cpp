@@ -17,8 +17,8 @@ See the Mulan PSL v2 for more details. */
 
 using namespace std;
 
-SortPhysicalOperator::SortPhysicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions)
-    : order_by_expressions_(std::move(order_by_expressions))
+SortPhysicalOperator::SortPhysicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions, int limit)
+    : order_by_expressions_(std::move(order_by_expressions)), limit_(limit)
 {}
 
 RC SortPhysicalOperator::open(Trx *trx)
@@ -33,6 +33,8 @@ RC SortPhysicalOperator::open(Trx *trx)
     LOG_WARN("failed to open child operator: %s", strrc(rc));
     return rc;
   }
+
+  const bool topk_mode = (limit_ > 0);
 
   // materialize all tuples
   while (RC::SUCCESS == (rc = children_[0]->next())) {
@@ -60,7 +62,21 @@ RC SortPhysicalOperator::open(Trx *trx)
       st.order_values.push_back(value);
     }
 
-    sorted_tuples_.push_back(std::move(st));
+    if (topk_mode) {
+      // Top-K: maintain a max-heap of size K
+      // heap top = largest = worst in ASC order
+      if ((int)sorted_tuples_.size() < limit_) {
+        sorted_tuples_.push_back(std::move(st));
+        push_heap(sorted_tuples_.begin(), sorted_tuples_.end(), less_by_order);
+      } else if (less_by_order(st, sorted_tuples_[0])) {
+        // new row is better (smaller) than the current worst
+        pop_heap(sorted_tuples_.begin(), sorted_tuples_.end(), less_by_order);
+        sorted_tuples_.back() = std::move(st);
+        push_heap(sorted_tuples_.begin(), sorted_tuples_.end(), less_by_order);
+      }
+    } else {
+      sorted_tuples_.push_back(std::move(st));
+    }
   }
 
   if (rc != RC::RECORD_EOF) {
@@ -68,8 +84,13 @@ RC SortPhysicalOperator::open(Trx *trx)
     return rc;
   }
 
-  // sort all tuples
-  sort_tuples();
+  // final sort
+  if (topk_mode) {
+    // heap -> sorted ASC
+    sort(sorted_tuples_.begin(), sorted_tuples_.end(), less_by_order);
+  } else {
+    sort_tuples();
+  }
 
   current_index_ = 0;
   return RC::SUCCESS;
@@ -109,14 +130,16 @@ RC SortPhysicalOperator::tuple_schema(TupleSchema &schema) const
 
 void SortPhysicalOperator::sort_tuples()
 {
-  std::sort(sorted_tuples_.begin(), sorted_tuples_.end(),
-      [](const SortTuple &a, const SortTuple &b) {
-        for (size_t i = 0; i < a.order_values.size() && i < b.order_values.size(); i++) {
-          int cmp = a.order_values[i].compare(b.order_values[i]);
-          if (cmp != 0) {
-            return cmp < 0;
-          }
-        }
-        return false;
-      });
+  sort(sorted_tuples_.begin(), sorted_tuples_.end(), less_by_order);
+}
+
+bool SortPhysicalOperator::less_by_order(const SortTuple &a, const SortTuple &b)
+{
+  for (size_t i = 0; i < a.order_values.size() && i < b.order_values.size(); i++) {
+    int cmp = a.order_values[i].compare(b.order_values[i]);
+    if (cmp != 0) {
+      return cmp < 0;
+    }
+  }
+  return false;
 }

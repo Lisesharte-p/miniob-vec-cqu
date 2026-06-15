@@ -37,7 +37,7 @@ public:
   }
   RC get_record(const RID &rid, Record &record) override;
 
-  RC create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name) override;
+  RC create_index(Trx *trx, const FieldMeta *field_meta, const char *index_name, bool is_vector_index = false, int lists = -1, int probes = -1) override;
   RC get_record_scanner(RecordScanner *&scanner, Trx *trx, ReadWriteMode mode) override;
   RC get_chunk_scanner(ChunkFileScanner &scanner, Trx *trx, ReadWriteMode mode) override;
   RC visit_record(const RID &rid, function<bool(Record &)> visitor) override;

@@ -21,7 +21,7 @@ See the Mulan PSL v2 for more details. */
 class SortPhysicalOperator : public PhysicalOperator
 {
 public:
-  SortPhysicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions);
+  SortPhysicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions, int limit = -1);
   virtual ~SortPhysicalOperator() = default;
 
   PhysicalOperatorType type() const override { return PhysicalOperatorType::SORT; }
@@ -35,14 +35,18 @@ public:
   RC     tuple_schema(TupleSchema &schema) const override;
 
 private:
-  void sort_tuples();
-
-  vector<unique_ptr<Expression>> order_by_expressions_;
-
   struct SortTuple {
     ValueListTuple tuple;
     vector<Value>  order_values;
   };
+
+  void sort_tuples();
+
+  static bool less_by_order(const SortTuple &a, const SortTuple &b);
+
+  vector<unique_ptr<Expression>> order_by_expressions_;
+  int                            limit_ = -1;  ///< Top-K limit (-1 = sort all)
+
   vector<SortTuple> sorted_tuples_;
   size_t           current_index_ = 0;
 };

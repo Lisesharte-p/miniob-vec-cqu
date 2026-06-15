@@ -15,14 +15,16 @@ See the Mulan PSL v2 for more details. */
 class SortLogicalOperator : public LogicalOperator
 {
 public:
-  SortLogicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions);
+  SortLogicalOperator(vector<unique_ptr<Expression>> &&order_by_expressions, int limit = -1);
   virtual ~SortLogicalOperator() = default;
 
   LogicalOperatorType type() const override { return LogicalOperatorType::SORT; }
   OpType              get_op_type() const override { return OpType::ORDERBY; }
 
   vector<unique_ptr<Expression>> &order_by_expressions() { return order_by_expressions_; }
+  int                             limit() const { return limit_; }
 
 private:
   vector<unique_ptr<Expression>> order_by_expressions_;
+  int                            limit_ = -1;
 };
