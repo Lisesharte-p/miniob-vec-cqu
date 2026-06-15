@@ -91,6 +91,7 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, unordered_map<st
 
   filter_unit = new FilterUnit;
 
+  AttrType left_type = AttrType::UNDEFINED;
   if (condition.left_is_attr) {
     Table           *table = nullptr;
     const FieldMeta *field = nullptr;
@@ -102,12 +103,15 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, unordered_map<st
     FilterObj filter_obj;
     filter_obj.init_attr(Field(table, field));
     filter_unit->set_left(filter_obj);
+    left_type = field->type();
   } else {
     FilterObj filter_obj;
     filter_obj.init_value(condition.left_value);
     filter_unit->set_left(filter_obj);
+    left_type = condition.left_value.attr_type();
   }
 
+  AttrType right_type = AttrType::UNDEFINED;
   if (condition.right_is_attr) {
     Table           *table = nullptr;
     const FieldMeta *field = nullptr;
@@ -119,13 +123,27 @@ RC FilterStmt::create_filter_unit(Db *db, Table *default_table, unordered_map<st
     FilterObj filter_obj;
     filter_obj.init_attr(Field(table, field));
     filter_unit->set_right(filter_obj);
+    right_type = field->type();
   } else {
     FilterObj filter_obj;
     filter_obj.init_value(condition.right_value);
     filter_unit->set_right(filter_obj);
+    right_type = condition.right_value.attr_type();
   }
 
   filter_unit->set_comp(comp);
+
+  // validate VECTORS comparisons
+  if (left_type == AttrType::VECTORS || right_type == AttrType::VECTORS) {
+    if (left_type != right_type) {
+      LOG_WARN("cannot compare VECTORS with non-VECTORS type");
+      return RC::INVALID_ARGUMENT;
+    }
+    if (comp != EQUAL_TO) {
+      LOG_WARN("VECTORS can only be compared with equality operator");
+      return RC::INVALID_ARGUMENT;
+    }
+  }
 
   // 检查两个类型是否能够比较
   return rc;

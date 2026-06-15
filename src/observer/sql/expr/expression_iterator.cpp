@@ -63,6 +63,11 @@ RC ExpressionIterator::iterate_child_expr(Expression &expr, function<RC(unique_p
       rc = callback(aggregate_expr.child());
     } break;
 
+    case ExprType::VECTOR_TO_STRING: {
+      auto &vector_to_string_expr = static_cast<VectorToStringExpr &>(expr);
+      rc = callback(vector_to_string_expr.child());
+    } break;
+
     case ExprType::NONE:
     case ExprType::STAR:
     case ExprType::UNBOUND_FIELD:

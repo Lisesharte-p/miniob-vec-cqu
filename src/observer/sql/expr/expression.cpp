@@ -141,6 +141,14 @@ ComparisonExpr::~ComparisonExpr() {}
 
 RC ComparisonExpr::compare_value(const Value &left, const Value &right, bool &result) const
 {
+  if (left.attr_type()==AttrType::VECTORS&&left.attr_type()!=right.attr_type()) {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (left.attr_type()==right.attr_type()&&left.attr_type()==AttrType::VECTORS) {
+    if (comp_!=EQUAL_TO) {
+      return RC::INVALID_ARGUMENT;
+    }
+  }
   RC  rc         = RC::SUCCESS;
   int cmp_result = left.compare(right);
   result         = false;
@@ -627,4 +635,38 @@ RC AggregateExpr::type_from_string(const char *type_str, AggregateExpr::Type &ty
     rc = RC::INVALID_ARGUMENT;
   }
   return rc;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+VectorToStringExpr::VectorToStringExpr(unique_ptr<Expression> child) : child_(std::move(child)) {}
+
+VectorToStringExpr::~VectorToStringExpr() {}
+
+RC VectorToStringExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  Value vector_value;
+  RC rc = child_->get_value(tuple, vector_value);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+
+  if (vector_value.attr_type() != AttrType::VECTORS) {
+    LOG_WARN("VECTOR_TO_STRING requires a vector argument");
+    return RC::INVALID_ARGUMENT;
+  }
+
+  const float *data = reinterpret_cast<const float *>(vector_value.data());
+  int dim = vector_value.length() / static_cast<int>(sizeof(float));
+
+  string result = "[";
+  for (int i = 0; i < dim; i++) {
+    if (i > 0) result += ",";
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%g", data[i]);
+    result += buf;
+  }
+  result += "]";
+
+  value.set_string(result.c_str(), result.length());
+  return RC::SUCCESS;
 }

@@ -47,6 +47,7 @@ enum class ExprType
   CONJUNCTION,  ///< 多个表达式使用同一种关系(AND或OR)来联结
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
+  VECTOR_TO_STRING,  ///< 向量转字符串
 };
 
 /**
@@ -526,5 +527,32 @@ public:
 
 private:
   Type                   aggregate_type_;
+  unique_ptr<Expression> child_;
+};
+
+/**
+ * @brief 向量转字符串表达式
+ * @ingroup Expression
+ */
+class VectorToStringExpr : public Expression
+{
+public:
+  VectorToStringExpr(unique_ptr<Expression> child);
+  virtual ~VectorToStringExpr();
+
+  unique_ptr<Expression> copy() const override
+  {
+    return make_unique<VectorToStringExpr>(child_->copy());
+  }
+
+  ExprType type() const override { return ExprType::VECTOR_TO_STRING; }
+  AttrType value_type() const override { return AttrType::CHARS; }
+  int      value_length() const override { return -1; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+
+  unique_ptr<Expression> &child() { return child_; }
+
+private:
   unique_ptr<Expression> child_;
 };

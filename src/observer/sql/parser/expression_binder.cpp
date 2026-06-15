@@ -90,6 +90,10 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
       ASSERT(false, "shouldn't be here");
     } break;
 
+    case ExprType::VECTOR_TO_STRING: {
+      return bind_vector_to_string_expression(expr, bound_expressions);
+    } break;
+
     default: {
       LOG_WARN("unknown expression type: %d", static_cast<int>(expr->type()));
       return RC::INTERNAL;
@@ -264,6 +268,21 @@ RC ExpressionBinder::bind_comparison_expression(
   unique_ptr<Expression> &right = child_bound_expressions[0];
   if (right.get() != right_expr.get()) {
     right_expr.reset(right.release());
+  }
+
+  {
+    AttrType left_type = left_expr->value_type();
+    AttrType right_type = right_expr->value_type();
+    if (left_type == AttrType::VECTORS || right_type == AttrType::VECTORS) {
+      if (left_type != right_type) {
+        LOG_WARN("cannot compare VECTORS with non-VECTORS type");
+        return RC::INVALID_ARGUMENT;
+      }
+      if (comparison_expr->comp() != EQUAL_TO) {
+        LOG_WARN("VECTORS can only be compared with equality operator");
+        return RC::INVALID_ARGUMENT;
+      }
+    }
   }
 
   bound_expressions.emplace_back(std::move(expr));
@@ -445,5 +464,36 @@ RC ExpressionBinder::bind_aggregate_expression(
   }
 
   bound_expressions.emplace_back(std::move(aggregate_expr));
+  return RC::SUCCESS;
+}
+
+RC ExpressionBinder::bind_vector_to_string_expression(
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto vector_to_string_expr = static_cast<VectorToStringExpr *>(expr.get());
+
+  vector<unique_ptr<Expression>> child_bound_expressions;
+  unique_ptr<Expression> &child_expr = vector_to_string_expr->child();
+
+  RC rc = bind_expression(child_expr, child_bound_expressions);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+
+  if (child_bound_expressions.size() != 1) {
+    LOG_WARN("invalid children number of vector_to_string expression: %d", child_bound_expressions.size());
+    return RC::INVALID_ARGUMENT;
+  }
+
+  unique_ptr<Expression> &child = child_bound_expressions[0];
+  if (child.get() != child_expr.get()) {
+    child_expr.reset(child.release());
+  }
+
+  bound_expressions.emplace_back(std::move(expr));
   return RC::SUCCESS;
 }

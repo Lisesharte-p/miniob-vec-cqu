@@ -20,6 +20,8 @@ See the Mulan PSL v2 for more details. */
 #include "common/lang/string.h"
 #include "common/lang/vector.h"
 
+#include <cstdint>
+
 namespace common {
 
 /**

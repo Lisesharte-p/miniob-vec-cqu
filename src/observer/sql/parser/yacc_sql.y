@@ -50,6 +50,72 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
   return expr;
 }
 
+Value *string_to_vector_value(const char *str, YYLTYPE *llocp, const char *sql_string, ParsedSqlResult *sql_result, yyscan_t scanner)
+{
+  if (str == nullptr || *str != '[') {
+    yyerror(llocp, sql_string, sql_result, scanner, "invalid vector format, expected e.g. [1,2,3]");
+    return nullptr;
+  }
+
+  size_t len = strlen(str);
+  if (len < 2 || str[len - 1] != ']') {
+    yyerror(llocp, sql_string, sql_result, scanner, "invalid vector format, expected e.g. [1,2,3]");
+    return nullptr;
+  }
+
+  const char *p   = str + 1;         // skip '['
+  const char *end = str + len - 1;   // position of ']'
+
+  if (p >= end) {
+    yyerror(llocp, sql_string, sql_result, scanner, "empty vector is not allowed");
+    return nullptr;
+  }
+
+  // count elements (commas + 1)
+  int dim = 1;
+  for (const char *q = p; q < end; q++) {
+    if (*q == ',') dim++;
+  }
+
+  // parse float values
+  float *buf       = new float[dim];
+  int    actual_dim = 0;
+
+  const char *q = p;
+  while (q < end) {
+    while (q < end && *q == ' ') q++;
+    if (q >= end) break;
+
+    char *endptr = nullptr;
+    float val    = strtof(q, &endptr);
+    if (endptr == q) {
+      delete[] buf;
+      yyerror(llocp, sql_string, sql_result, scanner, "invalid float value in vector string");
+      return nullptr;
+    }
+    buf[actual_dim++] = val;
+    q = endptr;
+
+    while (q < end && *q == ' ') q++;
+
+    if (*q == ',') {
+      q++;
+    } else if (*q != ']' && q < end) {
+      delete[] buf;
+      yyerror(llocp, sql_string, sql_result, scanner, "unexpected character in vector string");
+      return nullptr;
+    }
+  }
+
+  dim = actual_dim;
+
+  Value *val = new Value;
+  val->set_type(AttrType::VECTORS);
+  val->set_data(reinterpret_cast<char *>(buf), dim * static_cast<int>(sizeof(float)));
+  delete[] buf;
+  return val;
+}
+
 %}
 
 %define api.pure full
@@ -117,6 +183,9 @@ UnboundAggregateExpr *create_aggregate_expression(const char *aggregate_name,
         LE
         GE
         NE
+        STRING_TO_VECTOR
+        VECTOR_TO_STRING
+        DISTANCE
 
 /** union 中定义各种数据类型，真实生成的代码也是union类型，所以不能有非POD类型的数据 **/
 %union {
@@ -358,11 +427,15 @@ attr_def_list:
     ;
     
 attr_def:
-    ID type LBRACE number RBRACE 
+    ID type LBRACE number RBRACE
     {
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
+      if ($$->type == AttrType::VECTORS && $4 > 16383) {
+        yyerror(&@$, sql_string, sql_result, scanner, "vector dimension exceeds maximum 16383");
+        YYERROR;
+      }
       $$->length = $4;
     }
     | ID type
@@ -370,7 +443,11 @@ attr_def:
       $$ = new AttrInfoSqlNode;
       $$->type = (AttrType)$2;
       $$->name = $1;
-      $$->length = 4;
+      if ($$->type == AttrType::VECTORS) {
+        $$->length = 2048;
+      } else {
+        $$->length = 4;
+      }
     }
     ;
 number:
@@ -445,6 +522,14 @@ value:
       char *tmp = common::substr($1,1,strlen($1)-2);
       $$ = new Value(tmp);
       free(tmp);
+    }
+    | STRING_TO_VECTOR LBRACE SSS RBRACE {
+      char *tmp = common::substr($3, 1, strlen($3) - 2);
+      $$ = string_to_vector_value(tmp, &@$, sql_string, sql_result, scanner);
+      free(tmp);
+      if ($$ == nullptr) {
+        YYERROR;
+      }
     }
     ;
 storage_format:
@@ -568,6 +653,10 @@ expression:
     }
     | aggregate_expression {
       $$ = $1;
+    }
+    | VECTOR_TO_STRING LBRACE expression RBRACE {
+      $$ = new VectorToStringExpr(unique_ptr<Expression>($3));
+      $$->set_name(token_name(sql_string, &@$));
     }
     ;
 

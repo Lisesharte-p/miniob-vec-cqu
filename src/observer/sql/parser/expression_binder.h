@@ -59,6 +59,8 @@ private:
       unique_ptr<Expression> &arithmetic_expr, vector<unique_ptr<Expression>> &bound_expressions);
   RC bind_aggregate_expression(
       unique_ptr<Expression> &aggregate_expr, vector<unique_ptr<Expression>> &bound_expressions);
+  RC bind_vector_to_string_expression(
+      unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions);
 
 private:
   BinderContext &context_;

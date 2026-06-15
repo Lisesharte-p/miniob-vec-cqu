@@ -40,6 +40,9 @@ Value::Value(const Value &other)
     case AttrType::CHARS: {
       set_string_from_other(other);
     } break;
+    case AttrType::VECTORS: {
+      set_data(other.value_.pointer_value_, other.length_);
+    } break;
 
     default: {
       this->value_ = other.value_;
@@ -70,6 +73,9 @@ Value &Value::operator=(const Value &other)
     case AttrType::CHARS: {
       set_string_from_other(other);
     } break;
+    case AttrType::VECTORS: {
+      set_data(other.value_.pointer_value_, other.length_);
+    } break;
 
     default: {
       this->value_ = other.value_;
@@ -97,6 +103,7 @@ void Value::reset()
 {
   switch (attr_type_) {
     case AttrType::CHARS:
+    case AttrType::VECTORS:
       if (own_data_ && value_.pointer_value_ != nullptr) {
         delete[] value_.pointer_value_;
         value_.pointer_value_ = nullptr;
@@ -123,6 +130,12 @@ void Value::set_data(char *data, int length)
     case AttrType::FLOATS: {
       value_.float_value_ = *(float *)data;
       length_             = length;
+    } break;
+    case AttrType::VECTORS: {
+      own_data_ = true;
+      value_.pointer_value_ = new char[length];
+      memcpy(value_.pointer_value_, data, length);
+      length_ = length;
     } break;
     case AttrType::BOOLEANS: {
       value_.bool_value_ = *(int *)data != 0;
@@ -225,7 +238,8 @@ void Value::set_string_from_other(const Value &other)
 char *Value::data() const
 {
   switch (attr_type_) {
-    case AttrType::CHARS: {
+    case AttrType::CHARS:
+    case AttrType::VECTORS: {
       return value_.pointer_value_;
     } break;
     default: {

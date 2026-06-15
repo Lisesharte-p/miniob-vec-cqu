@@ -19,7 +19,7 @@ See the Mulan PSL v2 for more details. */
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <cstdint>
 #include <cstdlib>
 #include <string>
 #include <typeinfo>

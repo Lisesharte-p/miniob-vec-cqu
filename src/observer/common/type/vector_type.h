@@ -10,6 +10,7 @@ See the Mulan PSL v2 for more details. */
 
 #pragma once
 
+#include "common/value.h"
 #include "common/type/data_type.h"
 
 /**
@@ -22,11 +23,22 @@ public:
   VectorType() : DataType(AttrType::VECTORS) {}
   virtual ~VectorType() {}
 
-  int compare(const Value &left, const Value &right) const override { return INT32_MAX; }
+  int compare(const Value &left, const Value &right) const override
+  {
+    if (left.length() != right.length()) {
+      return 1;
+    }
+    for (int i = 0; i < left.length(); i++) {
+      if (left.data()[i] != right.data()[i]) {
+        return 1;
+      }
+    }
+    return 0;
+  }
 
   RC add(const Value &left, const Value &right, Value &result) const override { return RC::UNIMPLEMENTED; }
   RC subtract(const Value &left, const Value &right, Value &result) const override { return RC::UNIMPLEMENTED; }
   RC multiply(const Value &left, const Value &right, Value &result) const override { return RC::UNIMPLEMENTED; }
-
+  RC vector_distance(const Value &left, const Value &right, Value &result) const override;
   RC to_string(const Value &val, string &result) const override { return RC::UNIMPLEMENTED; }
 };
