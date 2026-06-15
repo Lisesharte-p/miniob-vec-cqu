@@ -96,6 +96,7 @@ public:
   string to_string() const;
 
   int compare(const Value &other) const;
+  float vector_distance(const Value &other, const string &distance_type) const;
 
   char *data() const;
 

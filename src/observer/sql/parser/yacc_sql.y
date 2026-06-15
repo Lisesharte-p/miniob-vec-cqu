@@ -658,6 +658,12 @@ expression:
       $$ = new VectorToStringExpr(unique_ptr<Expression>($3));
       $$->set_name(token_name(sql_string, &@$));
     }
+    | DISTANCE LBRACE expression COMMA expression COMMA SSS RBRACE {
+      char *dist_type = common::substr($7, 1, strlen($7) - 2);
+      $$ = new DistanceExpr(unique_ptr<Expression>($3), unique_ptr<Expression>($5), dist_type);
+      $$->set_name(token_name(sql_string, &@$));
+      free(dist_type);
+    }
     ;
 
 aggregate_expression:

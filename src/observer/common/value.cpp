@@ -260,7 +260,8 @@ string Value::to_string() const
 }
 
 int Value::compare(const Value &other) const { return DataType::type_instance(this->attr_type_)->compare(*this, other); }
-
+float Value::vector_distance(const Value &other, const string &distance_type) const
+{return DataType::type_instance(this->attr_type_)->vector_distance(*this,other,distance_type); }
 int Value::get_int() const
 {
   switch (attr_type_) {

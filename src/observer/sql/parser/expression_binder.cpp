@@ -94,6 +94,10 @@ RC ExpressionBinder::bind_expression(unique_ptr<Expression> &expr, vector<unique
       return bind_vector_to_string_expression(expr, bound_expressions);
     } break;
 
+    case ExprType::DISTANCE: {
+      return bind_distance_expression(expr, bound_expressions);
+    } break;
+
     default: {
       LOG_WARN("unknown expression type: %d", static_cast<int>(expr->type()));
       return RC::INTERNAL;
@@ -492,6 +496,56 @@ RC ExpressionBinder::bind_vector_to_string_expression(
   unique_ptr<Expression> &child = child_bound_expressions[0];
   if (child.get() != child_expr.get()) {
     child_expr.reset(child.release());
+  }
+
+  bound_expressions.emplace_back(std::move(expr));
+  return RC::SUCCESS;
+}
+
+RC ExpressionBinder::bind_distance_expression(
+    unique_ptr<Expression> &expr, vector<unique_ptr<Expression>> &bound_expressions)
+{
+  if (nullptr == expr) {
+    return RC::SUCCESS;
+  }
+
+  auto distance_expr = static_cast<DistanceExpr *>(expr.get());
+
+  vector<unique_ptr<Expression>> child_bound_expressions;
+  unique_ptr<Expression> &left_expr  = distance_expr->left();
+  unique_ptr<Expression> &right_expr = distance_expr->right();
+
+  RC rc = bind_expression(left_expr, child_bound_expressions);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+  if (child_bound_expressions.size() != 1) {
+    LOG_WARN("invalid left children number of distance expression: %d", child_bound_expressions.size());
+    return RC::INVALID_ARGUMENT;
+  }
+  unique_ptr<Expression> &left = child_bound_expressions[0];
+  if (left.get() != left_expr.get()) {
+    left_expr.reset(left.release());
+  }
+
+  child_bound_expressions.clear();
+  rc = bind_expression(right_expr, child_bound_expressions);
+  if (OB_FAIL(rc)) {
+    return rc;
+  }
+  if (child_bound_expressions.size() != 1) {
+    LOG_WARN("invalid right children number of distance expression: %d", child_bound_expressions.size());
+    return RC::INVALID_ARGUMENT;
+  }
+  unique_ptr<Expression> &right = child_bound_expressions[0];
+  if (right.get() != right_expr.get()) {
+    right_expr.reset(right.release());
+  }
+
+  // validate first argument is a field (column reference), not a value
+  if (left_expr->type() != ExprType::FIELD) {
+    LOG_WARN("DISTANCE requires a field as the first argument");
+    return RC::INVALID_ARGUMENT;
   }
 
   bound_expressions.emplace_back(std::move(expr));

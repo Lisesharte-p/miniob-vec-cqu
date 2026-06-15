@@ -1,0 +1,45 @@
+-- echo vector create table and insert
+
+create table vec_cmp(id int, embedding vector(3));
+insert into vec_cmp values(1, string_to_vector('[1,2,3]'));
+insert into vec_cmp values(2, string_to_vector('[4,5,6]'));
+insert into vec_cmp values(3, string_to_vector('[1.5,-2,3.25]'));
+
+-- echo vector equality comparison
+select * from vec_cmp where embedding = string_to_vector('[1,2,3]');
+
+-- echo vector greater-than should fail
+select * from vec_cmp where embedding > string_to_vector('[1,2,3]');
+
+-- echo vector less-than should fail
+select * from vec_cmp where embedding < string_to_vector('[1,2,3]');
+
+-- echo vector equal int should fail
+select * from vec_cmp where embedding = 1;
+
+-- echo vector equal char should fail
+select * from vec_cmp where embedding = 'abc';
+
+-- echo vector_to_string
+select VECTOR_TO_STRING(embedding) from vec_cmp;
+
+-- echo vector_to_string with where
+select VECTOR_TO_STRING(embedding) from vec_cmp where id=1;
+
+-- echo vector_to_string with out-of-bounds id
+select VECTOR_TO_STRING(embedding) from vec_cmp where id=4;
+
+-- echo distance
+select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'EUCLIDEAN') from vec_cmp;
+
+-- echo distance with cosine
+select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'cosine') from vec_cmp;
+
+-- echo distance with dot
+select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'DOT') from vec_cmp;
+
+-- echo distance first arg not field should fail
+select DISTANCE(string_to_vector('[1,2,3]'), string_to_vector('[1,2,3]'), 'COSINE') from vec_cmp;
+
+-- echo distance no quotes on metric should fail
+select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), cosine) from vec_cmp;

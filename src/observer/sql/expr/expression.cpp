@@ -670,3 +670,37 @@ RC VectorToStringExpr::get_value(const Tuple &tuple, Value &value) const
   value.set_string(result.c_str(), result.length());
   return RC::SUCCESS;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+DistanceExpr::DistanceExpr(unique_ptr<Expression> left, unique_ptr<Expression> right, const string &distance_type)
+    : left_(std::move(left)), right_(std::move(right)), distance_type_(distance_type)
+{}
+
+DistanceExpr::~DistanceExpr() {}
+
+RC DistanceExpr::get_value(const Tuple &tuple, Value &value) const
+{
+  Value vector_value;
+  Value right_value;
+  if (left_->type()!=ExprType::FIELD||right_->type()!=ExprType::VALUE) {
+    return RC::INVALID_ARGUMENT;
+  }
+  RC rc = left_->get_value(tuple, vector_value);
+  RC rc_right=right_->get_value(tuple, right_value);
+
+  if (rc!=RC::SUCCESS||rc_right!=RC::SUCCESS) {
+    return RC::NOTFOUND;
+  }
+  if (vector_value.attr_type() != right_value.attr_type()) {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (vector_value.attr_type() != AttrType::VECTORS) {
+    return RC::INVALID_ARGUMENT;
+  }
+  if (vector_value.length()!=right_value.length()) {
+    return RC::INVALID_ARGUMENT;
+  }
+  value.set_float(vector_value.vector_distance(right_value, distance_type_));
+
+  return RC::SUCCESS;
+}

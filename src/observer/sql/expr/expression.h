@@ -48,6 +48,7 @@ enum class ExprType
   ARITHMETIC,   ///< 算术运算
   AGGREGATION,  ///< 聚合运算
   VECTOR_TO_STRING,  ///< 向量转字符串
+  DISTANCE,  ///< 向量距离计算
 };
 
 /**
@@ -555,4 +556,34 @@ public:
 
 private:
   unique_ptr<Expression> child_;
+};
+
+/**
+ * @brief 向量距离计算表达式
+ * @ingroup Expression
+ */
+class DistanceExpr : public Expression
+{
+public:
+  DistanceExpr(unique_ptr<Expression> left, unique_ptr<Expression> right, const string &distance_type);
+  virtual ~DistanceExpr();
+
+  unique_ptr<Expression> copy() const override
+  {
+    return make_unique<DistanceExpr>(left_->copy(), right_->copy(), distance_type_);
+  }
+
+  ExprType type() const override { return ExprType::DISTANCE; }
+  AttrType value_type() const override { return AttrType::FLOATS; }
+
+  RC get_value(const Tuple &tuple, Value &value) const override;
+
+  unique_ptr<Expression> &left() { return left_; }
+  unique_ptr<Expression> &right() { return right_; }
+  const string &distance_type() const { return distance_type_; }
+
+private:
+  unique_ptr<Expression> left_;
+  unique_ptr<Expression> right_;
+  string                 distance_type_;
 };
