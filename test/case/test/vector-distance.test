@@ -1,0 +1,42 @@
+-- echo vector distance calculation
+
+create table vec_dist(id int, embedding vector(4));
+insert into vec_dist values(1, string_to_vector('[1,2,3,4]'));
+insert into vec_dist values(2, string_to_vector('[1.1,2.1,3.1,4.1]'));
+insert into vec_dist values(3, string_to_vector('[10,20,30,40]'));
+
+-- echo distance with euclidean
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') from vec_dist;
+
+-- echo distance with cosine
+select id, DISTANCE(embedding, string_to_vector('[0,1,0,0]'), 'cosine') from vec_dist;
+
+-- echo distance with dot
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'DOT') from vec_dist;
+
+-- echo distance with as alias
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist;
+
+-- echo order by distance ascending
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist order by dis;
+
+-- echo distance with limit top-2 nearest
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist order by dis limit 2;
+
+-- echo create vector index
+CREATE VECTOR INDEX idx ON vec_dist(embedding) WITH (lists=1, probes=1);
+
+-- echo ann search with index
+select id from vec_dist order by DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') limit 2;
+
+-- echo ann search with as alias
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist order by dis limit 2;
+
+-- echo ann search with limit 1
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist order by dis limit 1;
+
+-- echo full scan without limit uses sort path
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist order by dis;
+
+-- echo distance with where condition
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as dis from vec_dist where id > 1 order by dis;

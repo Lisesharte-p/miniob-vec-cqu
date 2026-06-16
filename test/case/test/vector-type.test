@@ -8,17 +8,32 @@ insert into vec_cmp values(3, string_to_vector('[1.5,-2,3.25]'));
 -- echo vector equality comparison
 select * from vec_cmp where embedding = string_to_vector('[1,2,3]');
 
+-- echo vector equality comparison no match
+select * from vec_cmp where embedding = string_to_vector('[7,8,9]');
+
 -- echo vector greater-than should fail
 select * from vec_cmp where embedding > string_to_vector('[1,2,3]');
 
 -- echo vector less-than should fail
 select * from vec_cmp where embedding < string_to_vector('[1,2,3]');
 
+-- echo vector greater-equal should fail
+select * from vec_cmp where embedding >= string_to_vector('[1,2,3]');
+
+-- echo vector less-equal should fail
+select * from vec_cmp where embedding <= string_to_vector('[1,2,3]');
+
+-- echo vector not-equal should fail
+select * from vec_cmp where embedding != string_to_vector('[1,2,3]');
+
 -- echo vector equal int should fail
 select * from vec_cmp where embedding = 1;
 
 -- echo vector equal char should fail
 select * from vec_cmp where embedding = 'abc';
+
+-- echo vector equal float should fail
+select * from vec_cmp where embedding = 1.5;
 
 -- echo vector_to_string
 select VECTOR_TO_STRING(embedding) from vec_cmp;
@@ -29,17 +44,78 @@ select VECTOR_TO_STRING(embedding) from vec_cmp where id=1;
 -- echo vector_to_string with out-of-bounds id
 select VECTOR_TO_STRING(embedding) from vec_cmp where id=4;
 
--- echo distance
+-- echo vector_to_string all columns
+select id, VECTOR_TO_STRING(embedding) from vec_cmp;
+
+-- echo vector_to_string with where id in range
+select id, VECTOR_TO_STRING(embedding) from vec_cmp where id>=2;
+
+-- echo distance euclidean
 select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'EUCLIDEAN') from vec_cmp;
 
--- echo distance with cosine
+-- echo distance cosine
 select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'cosine') from vec_cmp;
 
--- echo distance with dot
+-- echo distance dot
 select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'DOT') from vec_cmp;
+
+-- echo distance euclidean with self
+select id, DISTANCE(embedding, string_to_vector('[1,2,3]'), 'EUCLIDEAN') from vec_cmp where id=1;
+
+-- echo distance with negative values
+select id, DISTANCE(embedding, string_to_vector('[-1,-2,-3]'), 'EUCLIDEAN') from vec_cmp;
 
 -- echo distance first arg not field should fail
 select DISTANCE(string_to_vector('[1,2,3]'), string_to_vector('[1,2,3]'), 'COSINE') from vec_cmp;
 
 -- echo distance no quotes on metric should fail
 select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), cosine) from vec_cmp;
+
+-- echo distance with unknown metric should succeed with fallback 0
+select id, DISTANCE(embedding, string_to_vector('[0,0,0]'), 'MANHATTAN') from vec_cmp;
+
+-- echo create table with default dimension vector
+
+create table vec_default(id int, embedding vector);
+insert into vec_default values(1, string_to_vector('[1,2,3]'));
+
+-- echo vector_to_string on default dim table
+select VECTOR_TO_STRING(embedding) from vec_default;
+
+-- echo create table with multiple vector columns
+
+create table vec_multi(id int, v1 vector(2), v2 vector(3));
+insert into vec_multi values(1, string_to_vector('[1,2]'), string_to_vector('[3,4,5]'));
+insert into vec_multi values(2, string_to_vector('[6,7]'), string_to_vector('[8,9,10]'));
+
+-- echo vector_to_string on multi vector table
+select id, VECTOR_TO_STRING(v1), VECTOR_TO_STRING(v2) from vec_multi;
+
+-- echo distance between two vector columns
+select id, DISTANCE(v1, string_to_vector('[0,0]'), 'EUCLIDEAN'), DISTANCE(v2, string_to_vector('[0,0,0]'), 'EUCLIDEAN') from vec_multi;
+
+-- echo create table with vector larger dimension
+
+create table vec_big(id int, embedding vector(5));
+insert into vec_big values(1, string_to_vector('[1,2,3,4,5]'));
+
+-- echo insert with too many dimensions should fail
+insert into vec_big values(2, string_to_vector('[1,2,3,4,5,6]'));
+
+-- echo insert with too few dimensions should fail
+insert into vec_big values(3, string_to_vector('[1,2,3]'));
+
+-- echo vector_to_string on 5-dim vector
+select VECTOR_TO_STRING(embedding) from vec_big where id=1;
+
+-- echo distance on 5-dim vector
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0,0]'), 'EUCLIDEAN') from vec_big;
+
+-- echo string_to_vector with negative values
+insert into vec_cmp values(4, string_to_vector('[-0.5, 0, 3.14159]'));
+
+-- echo vector_to_string negative values
+select VECTOR_TO_STRING(embedding) from vec_cmp where id=4;
+
+-- echo distance with high dimension vector
+select id, DISTANCE(embedding, string_to_vector('[1,2,3]'), 'EUCLIDEAN') from vec_cmp where id=4;

@@ -1,0 +1,59 @@
+-- echo distance calculation
+
+create table vec_dist_calc(id int, embedding vector(4));
+insert into vec_dist_calc values(1, string_to_vector('[1,2,3,4]'));
+insert into vec_dist_calc values(2, string_to_vector('[1.1,2.1,3.1,4.1]'));
+insert into vec_dist_calc values(3, string_to_vector('[10,20,30,40]'));
+insert into vec_dist_calc values(4, string_to_vector('[-1,-2,-3,-4]'));
+insert into vec_dist_calc values(5, string_to_vector('[0,0,0,0]'));
+
+-- echo distance with euclidean
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') from vec_dist_calc order by id;
+
+-- echo distance with cosine
+select id, DISTANCE(embedding, string_to_vector('[0,1,0,0]'), 'cosine') from vec_dist_calc order by id;
+
+-- echo distance with dot product
+select id, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'DOT') from vec_dist_calc order by id;
+
+-- echo distance euclidean between two specific vectors
+select DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'EUCLIDEAN') as d from vec_dist_calc where id=1;
+
+-- echo distance dot between two specific vectors
+select DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'DOT') as d from vec_dist_calc where id=4;
+
+-- echo distance cosine between opposite vectors
+select DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'cosine') as d from vec_dist_calc where id=4;
+
+-- echo distance zero vector self
+select DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'EUCLIDEAN') as d from vec_dist_calc where id=5;
+
+-- echo distance zero vector cosine
+select DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'cosine') as d from vec_dist_calc where id=5;
+
+-- echo distance zero vector dot
+select DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'DOT') as d from vec_dist_calc where id=5;
+
+-- echo distance self euclidean
+select DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') as d from vec_dist_calc where id=1;
+
+-- echo multiple distance in one query
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'EUCLIDEAN') as euclid, DISTANCE(embedding, string_to_vector('[1,2,3,4]'), 'DOT') as dot_val from vec_dist_calc order by id;
+
+-- echo distance with vector_to_string
+select id, VECTOR_TO_STRING(embedding), DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'EUCLIDEAN') from vec_dist_calc order by id;
+
+-- echo distance as filter condition in where
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'EUCLIDEAN') as d from vec_dist_calc where id<=2 order by id;
+
+-- echo distance first arg not field should fail
+select DISTANCE(string_to_vector('[1,2,3,4]'), string_to_vector('[1,2,3,4]'), 'EUCLIDEAN') from vec_dist_calc;
+
+-- echo distance no quotes on metric should fail
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0]'), euclidean) from vec_dist_calc;
+
+-- echo distance unknown metric
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'MANHATTAN') from vec_dist_calc order by id;
+
+-- echo distance with l2 synonym for euclidean
+select id, DISTANCE(embedding, string_to_vector('[0,0,0,0]'), 'L2') from vec_dist_calc order by id;
