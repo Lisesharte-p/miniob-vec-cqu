@@ -34,3 +34,42 @@ RC SumAggregator::evaluate(Value& result)
   result = value_;
   return RC::SUCCESS;
 }
+
+RC CountAggregator::accumulate(const Value &value)
+{
+  count_++;
+  return RC::SUCCESS;
+}
+
+RC CountAggregator::evaluate(Value &result)
+{
+  result = Value(count_);
+  return RC::SUCCESS;
+}
+
+RC AvgAggregator::accumulate(const Value &value)
+{
+  if (value_.attr_type() == AttrType::UNDEFINED) {
+    value_ = value;
+    count_ = 1;
+    return RC::SUCCESS;
+  }
+
+  ASSERT(value.attr_type() == value_.attr_type(), "type mismatch. value type: %s, value_.type: %s",
+        attr_type_to_string(value.attr_type()), attr_type_to_string(value_.attr_type()));
+
+  Value::add(value, value_, value_);
+  count_++;
+  return RC::SUCCESS;
+}
+
+RC AvgAggregator::evaluate(Value &result)
+{
+  if (count_ == 0) {
+    result = Value(0);
+    return RC::SUCCESS;
+  }
+  Value count_val(count_);
+  Value::divide(value_, count_val, result);
+  return RC::SUCCESS;
+}

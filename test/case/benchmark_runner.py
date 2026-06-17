@@ -34,7 +34,7 @@ MINIOB_ROOT = os.path.join(SCRIPT_DIR, "../..")
 OBSERVER_BIN = os.path.join(MINIOB_ROOT, "build_debug/bin/observer")
 OBSERVER_INI = os.path.join(MINIOB_ROOT, "etc/observer.ini")
 SOCKET_PATH = "/tmp/miniob_benchmark.sock"
-DATA_DIR = os.path.join(MINIOB_ROOT, "db")
+DATA_DIR = os.path.join(MINIOB_ROOT, "miniob", "db")
 
 # ---------------------------------------------------------------------------
 # Socket client for MiniOB
@@ -71,6 +71,10 @@ class MiniOBSocketClient:
             while True:
                 data = self._sock.recv(8192)
                 if not data:
+                    # Peer closed connection before we received a null-terminated
+                    # response. Treat as connection failure so callers can react.
+                    if not result:
+                        return False, "connection closed by peer", 0.0
                     break
                 result += data
                 if data[-1] == 0:
@@ -100,7 +104,7 @@ class MiniOBSocketClient:
 def start_observer() -> Optional[subprocess.Popen]:
     """Start observer process. Returns Popen handle or None."""
     # Clean up stale data
-    db_sys = os.path.join(DATA_DIR, "db", "sys")
+    db_sys = os.path.join(DATA_DIR, "sys")
     if os.path.exists(db_sys):
         import shutil
         shutil.rmtree(db_sys, ignore_errors=True)
@@ -145,7 +149,7 @@ def stop_observer(proc: Optional[subprocess.Popen]):
         pass
 
     # Clean up data
-    db_sys = os.path.join(DATA_DIR, "db", "sys")
+    db_sys = os.path.join(DATA_DIR, "sys")
     if os.path.exists(db_sys):
         import shutil
         shutil.rmtree(db_sys, ignore_errors=True)
@@ -186,7 +190,10 @@ def run_setup_sql(client: MiniOBSocketClient, table_name: str,
                   dim: int, count: int) -> Tuple[float, float]:
     """Create table and insert data. Returns (setup_time_ms, insert_throughput)."""
     # Drop old table if exists
-    client.execute(f"drop table {table_name};")
+    ok, out, _ = client.execute(f"drop table {table_name};")
+    if not ok and "connection closed" in out:
+        print(f"  ERROR: Observer connection lost during drop: {out}", file=sys.stderr)
+        return 0.0, 0.0
 
     # Create table
     ok, out, lat_create = client.execute(
@@ -404,27 +411,29 @@ def experiment_lists(client: MiniOBSocketClient, args) -> Dict:
     queries = generate_query_vectors(args.dim, args.num_queries)
     results = []
 
-    # Setup data once
-    setup_time, insert_rate = run_setup_sql(client, table, args.dim, args.lists_data_size)
-    print(f"  Setup: {setup_time:.0f}ms, Insert rate: {insert_rate:.0f} rows/s")
-
-    # Pre-compute exact ground truth (no index yet → true full scan)
-    exact_ground_truth_all = []
-    for qvec in queries[:args.num_queries]:
-        ids, _ = exact_search(client, table, qvec, args.k)
-        exact_ground_truth_all.append(ids)
-
     for lv in lists_values:
+        # drop_index/drop_table are unimplemented in MiniOB, so use unique table per iteration
+        table_n = f"{table}_{lv}"
+        setup_time, insert_rate = run_setup_sql(client, table_n, args.dim, args.lists_data_size)
+        if lv == lists_values[0]:
+            print(f"  Setup: {setup_time:.0f}ms, Insert rate: {insert_rate:.0f} rows/s")
+
+        # Exact ground truth (no index yet)
+        exact_ground_truth_all = []
+        for qvec in queries[:args.num_queries]:
+            ids, _ = exact_search(client, table_n, qvec, args.k)
+            exact_ground_truth_all.append(ids)
+
         print(f"\n  --- lists={lv} ---")
         idx_name = f"idx_lists_{lv}"
-        build_time = create_vector_index(client, table, idx_name, "embedding",
+        build_time = create_vector_index(client, table_n, idx_name, "embedding",
                                          lv, args.probes_default)
         print(f"  Build time: {build_time:.0f}ms")
 
         ann_lats = []
         recalls = []
         for qi, qvec in enumerate(queries[:args.num_queries]):
-            ann_ids, lat = ann_search(client, table, qvec, args.k)
+            ann_ids, lat = ann_search(client, table_n, qvec, args.k)
             ann_lats.append(lat)
             recalls.append(compute_recall(ann_ids, exact_ground_truth_all[qi], args.k))
 
@@ -442,10 +451,6 @@ def experiment_lists(client: MiniOBSocketClient, args) -> Dict:
             "ann_latency_ms_avg": round(avg_ann, 3),
             "recall_avg": round(avg_recall, 4),
         })
-
-        drop_index(client, idx_name)
-
-    client.execute(f"drop table {table};")
     return {"experiment": "lists_sensitivity", "results": results}
 
 
@@ -465,32 +470,33 @@ def experiment_probes(client: MiniOBSocketClient, args) -> Dict:
     queries = generate_query_vectors(args.dim, args.num_queries)
     results = []
 
-    # Setup data and index once (with fixed lists)
-    setup_time, insert_rate = run_setup_sql(client, table, args.dim, args.probes_data_size)
-    print(f"  Setup: {setup_time:.0f}ms, Insert rate: {insert_rate:.0f} rows/s")
-
-    # Pre-compute exact ground truth (no index yet → true full scan)
-    exact_ground_truth_all = []
-    for qvec in queries[:args.num_queries]:
-        ids, _ = exact_search(client, table, qvec, args.k)
-        exact_ground_truth_all.append(ids)
-
-    # We need to recreate index for each probes value
     for pv in probes_values:
         if pv > args.lists_default:
             print(f"  --- probes={pv} (skipped: probes > lists) ---")
             continue
 
+        # drop_index/drop_table are unimplemented in MiniOB, so use unique table per iteration
+        table_n = f"{table}_{pv}"
+        setup_time, insert_rate = run_setup_sql(client, table_n, args.dim, args.probes_data_size)
+        if pv == probes_values[0]:
+            print(f"  Setup: {setup_time:.0f}ms, Insert rate: {insert_rate:.0f} rows/s")
+
+        # Exact ground truth (no index yet)
+        exact_ground_truth_all = []
+        for qvec in queries[:args.num_queries]:
+            ids, _ = exact_search(client, table_n, qvec, args.k)
+            exact_ground_truth_all.append(ids)
+
         print(f"\n  --- probes={pv} ---")
         idx_name = f"idx_probes_{pv}"
-        build_time = create_vector_index(client, table, idx_name, "embedding",
+        build_time = create_vector_index(client, table_n, idx_name, "embedding",
                                          args.lists_default, pv)
         print(f"  Build time: {build_time:.0f}ms")
 
         ann_lats = []
         recalls = []
         for qi, qvec in enumerate(queries[:args.num_queries]):
-            ann_ids, lat = ann_search(client, table, qvec, args.k)
+            ann_ids, lat = ann_search(client, table_n, qvec, args.k)
             ann_lats.append(lat)
             recalls.append(compute_recall(ann_ids, exact_ground_truth_all[qi], args.k))
 
@@ -508,10 +514,6 @@ def experiment_probes(client: MiniOBSocketClient, args) -> Dict:
             "ann_latency_ms_avg": round(avg_ann, 3),
             "recall_avg": round(avg_recall, 4),
         })
-
-        drop_index(client, idx_name)
-
-    client.execute(f"drop table {table};")
     return {"experiment": "probes_sensitivity", "results": results}
 
 
@@ -538,11 +540,13 @@ def experiment_dimension(client: MiniOBSocketClient, args) -> Dict:
 
         queries = queries_by_dim[dim]
 
-        # Exact search
+        # Exact search (BEFORE index — saves ground truth for recall)
         exact_lats = []
+        exact_ground_truth_all = []
         for qvec in queries[:args.num_queries]:
             ids, lat = exact_search(client, table, qvec, args.k)
             exact_lats.append(lat)
+            exact_ground_truth_all.append(ids)
 
         avg_exact = sum(exact_lats) / len(exact_lats) if exact_lats else 0
 
@@ -554,12 +558,6 @@ def experiment_dimension(client: MiniOBSocketClient, args) -> Dict:
         build_time = create_vector_index(client, table, idx_name, "embedding",
                                          dim_adjusted_lists, dim_adjusted_probes)
         print(f"  Index build (lists={dim_adjusted_lists}): {build_time:.0f}ms")
-
-        # Save exact ground truth before index
-        exact_ground_truth_all = []
-        for qvec in queries[:args.num_queries]:
-            ids, _ = exact_search(client, table, qvec, args.k)
-            exact_ground_truth_all.append(ids)
 
         # ANN search
         ann_lats = []
@@ -669,7 +667,23 @@ def experiment_general_ops(client: MiniOBSocketClient, args) -> Dict:
     # --- Vector exact search (for comparison) ---
     print("  --- Vector Exact Search ---")
     table_vec = "bench_vec_ops"
-    run_setup_sql(client, table_vec, args.dim, N)
+    setup_time, insert_rate = run_setup_sql(client, table_vec, args.dim, N)
+    if setup_time == 0.0 and insert_rate == 0.0:
+        print("  ERROR: Vector table setup failed, skipping vector search benchmarks",
+              file=sys.stderr)
+        client.execute(f"drop table {table_int};")
+        return {
+            "experiment": "general_ops_comparison",
+            "data_size": N,
+            "num_queries": args.num_queries,
+            "results": {
+                "integer_point_query_ms": round(avg_pt, 3),
+                "integer_range_scan_500rows_ms": round(avg_range, 3),
+                "integer_sort_limit_ms": round(avg_sort, 3),
+                "integer_full_scan_count_ms": round(avg_scan, 3),
+                "error": "Vector table setup failed - observer connection lost",
+            }
+        }
     queries = generate_query_vectors(args.dim, args.num_queries)
     vec_exact_lats = []
     exact_ground_truth_all = []
@@ -774,8 +788,8 @@ Examples:
                         help="Number of queries per test point (default: 50)")
 
     # Default index params
-    parser.add_argument("--lists-default", type=int, default=100,
-                        help="Default lists for experiments 1,3,4,5 (default: 100)")
+    parser.add_argument("--lists-default", type=int, default=20,
+                        help="Default lists for experiments 1,3,4,5 (default: 20)")
     parser.add_argument("--probes-default", type=int, default=10,
                         help="Default probes for experiments 1,2,4,5 (default: 10)")
 
@@ -899,7 +913,7 @@ def _print_summary(report: Dict):
         exp_meta = exp_data.get("experiment", exp_name)
         results = exp_data.get("results", [])
 
-        if not results:DATA_DIR
+        if not results:
             continue
 
         print(f"\n--- {exp_meta} ---")

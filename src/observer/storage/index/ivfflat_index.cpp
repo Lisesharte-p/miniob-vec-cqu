@@ -189,7 +189,7 @@ void IvfflatIndex::train(const std::vector<std::vector<float>> &all_vectors, std
   }
 
   std::vector<int> assignments(num_vectors, 0);
-  const int max_iter = 100;
+  const int max_iter = 1000;
   bool changed = true;
 
   // 2. k-means iteration
