@@ -465,6 +465,11 @@ class CommandRunner:
     '''
     command_line = command_line[len(self.__command_prefix) : ]
     command_line = command_line.lstrip()
+
+    # 像 -- ======= 这种装饰行，当作注释忽略
+    if not command_line or not command_line[0].isalpha():
+      return True
+
     args = command_line.split(' ', 1)
     command = args[0]
 
@@ -698,6 +703,13 @@ class TestSuite:
     self.__report_only = report_only
 
   def __compare_files(self, file1, file2):
+    if not os.path.isfile(file2):
+      _logger.error("Expected result file not found: %s", file2)
+      return False
+    if not os.path.isfile(file1):
+      _logger.error("Actual result file not found: %s", file1)
+      return False
+
     with open(file1, 'r') as f1, open(file2, 'r') as f2:
       lines1 = f1.readlines()
       lines2 = f2.readlines()
